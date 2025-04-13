@@ -4,67 +4,85 @@ import { useState, useRef, useEffect } from "react"
 import { Play, Pause, Volume2 } from "lucide-react"
 import { Slider } from "@/components/ui/slider"
 
-export default function AudioPlayer() {
+interface AudioPlayerProps {
+  audioUrl: string | null
+}
+
+export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(120) // Mock duration in seconds
+  const [duration, setDuration] = useState(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    // Create audio element for demo purposes
-    audioRef.current = new Audio("/placeholder.mp3")
+    if (audioUrl) {
+      // Clean up previous audio instance
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.removeEventListener("timeupdate", updateTime)
+        audioRef.current.removeEventListener("loadedmetadata", updateMetadata)
+      }
+
+      // Create new audio element
+      audioRef.current = new Audio(audioUrl)
+      
+      // Set up event listeners
+      audioRef.current.addEventListener("loadedmetadata", updateMetadata)
+      audioRef.current.addEventListener("timeupdate", updateTime)
+      audioRef.current.addEventListener("ended", () => setIsPlaying(false))
+
+      // Initialize duration
+      updateMetadata()
+    }
 
     return () => {
       if (audioRef.current) {
         audioRef.current.pause()
-      }
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
+        audioRef.current.removeEventListener("timeupdate", updateTime)
+        audioRef.current.removeEventListener("loadedmetadata", updateMetadata)
       }
     }
-  }, [])
+  }, [audioUrl])
 
-  const togglePlayPause = () => {
+  const updateMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration || 0)
+    }
+  }
+
+  const updateTime = () => {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime)
+    }
+  }
+
+  const togglePlayPause = async () => {
     if (!audioRef.current) return
 
-    if (isPlaying) {
-      audioRef.current.pause()
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
+    try {
+      if (isPlaying) {
+        audioRef.current.pause()
+      } else {
+        await audioRef.current.play()
       }
-    } else {
-      audioRef.current.play().catch(() => {
-        // Handle play error (often happens when audio isn't loaded)
-        console.log("Audio playback failed")
-      })
-
-      intervalRef.current = setInterval(() => {
-        if (audioRef.current) {
-          setCurrentTime((prev) => {
-            // For demo purposes, loop back to start when reaching end
-            if (prev >= duration) return 0
-            return prev + 1
-          })
-        }
-      }, 1000)
+      setIsPlaying(!isPlaying)
+    } catch (error) {
+      console.error("Audio playback failed:", error)
     }
-
-    setIsPlaying(!isPlaying)
   }
 
   const handleSliderChange = (value: number[]) => {
     const newTime = value[0]
-    setCurrentTime(newTime)
     if (audioRef.current) {
       audioRef.current.currentTime = newTime
+      setCurrentTime(newTime)
     }
   }
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs < 10 ? "0" : ""}${secs}`
+    return `${mins}:${secs.toString().padStart(2, "0")}`
   }
 
   return (
@@ -73,12 +91,20 @@ export default function AudioPlayer() {
         <button
           onClick={togglePlayPause}
           className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-purple-600 flex items-center justify-center text-white shadow-md hover:shadow-lg transition-all duration-200"
+          disabled={!audioUrl}
         >
           {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
         </button>
 
         <div className="flex-1">
-          <Slider value={[currentTime]} max={duration} step={1} onValueChange={handleSliderChange} className="my-1.5" />
+          <Slider 
+            value={[currentTime]} 
+            max={duration} 
+            step={1} 
+            onValueChange={handleSliderChange} 
+            className="my-1.5"
+            disabled={!audioUrl}
+          />
 
           <div className="flex justify-between text-xs text-gray-500">
             <span>{formatTime(currentTime)}</span>
@@ -91,4 +117,3 @@ export default function AudioPlayer() {
     </div>
   )
 }
-

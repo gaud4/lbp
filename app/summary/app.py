@@ -68,8 +68,8 @@ def extractive_summary(text: str, percentage: int) -> str:
 
 # === Abstractive Summary using T5 ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = T5ForConditionalGeneration.from_pretrained('t5-base').to(device)
-tokenizer = T5Tokenizer.from_pretrained('t5-base')
+model = T5ForConditionalGeneration.from_pretrained('t5-large').to(device)
+tokenizer = T5Tokenizer.from_pretrained('t5-large')
 
 def abstractive_summary(text: str, percentage: int) -> str:
     clean_text = text.strip().replace("\n", " ")

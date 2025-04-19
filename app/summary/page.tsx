@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { FileText, Upload } from "lucide-react"
+import { FileText, Upload, ClipboardCopy, Download as DownloadIcon } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Slider } from "@/components/ui/slider"
@@ -29,19 +29,66 @@ export default function SummarizePage() {
     }
   }
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setIsGenerating(true)
 
-    // Simulate API call with timeout
-    setTimeout(() => {
-      const demoSummary =
-        summaryType === "extractive"
-          ? "This is an example of an extractive summary. It contains key sentences directly from the original text, highlighting the most important points without altering the original wording."
-          : "This is an example of an abstractive summary. Unlike extractive summaries, this has been rewritten in a new way that captures the essence of the original content while using different phrasing and structure."
+    try {
+      let res
+      if (inputMethod === "text") {
+        res = await fetch("http://127.0.0.1:5000/summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: textInput,
+            percentage: summaryLength,
+            method: summaryType,
+          }),
+        })
+      } else if (inputMethod === "pdf" && file) {
+        const formData = new FormData()
+        formData.append("file", file)
+        formData.append("method", summaryType)
+        formData.append("percentage", summaryLength.toString())
 
-      setSummary(demoSummary)
+        res = await fetch("http://127.0.0.1:5000/summarize", {
+          method: "POST",
+          body: formData,
+        })
+      } else {
+        throw new Error("No valid input provided.")
+      }
+
+      const data = await res.json()
+      if (res.ok) {
+        setSummary(data.summary)
+      } else {
+        setSummary(data.error || "Failed to summarize.")
+      }
+    } catch (error) {
+      console.error("Error summarizing:", error)
+      setSummary("Failed to summarize.")
+    } finally {
       setIsGenerating(false)
-    }, 2000)
+    }
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(summary)
+      alert("Summary copied to clipboard")
+    } catch (err) {
+      console.error("Failed to copy:", err)
+    }
+  }
+
+  const handleDownload = () => {
+    const blob = new Blob([summary], { type: "text/plain" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "summary.txt"
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -141,7 +188,7 @@ export default function SummarizePage() {
               </Tabs>
             </div>
 
-            {/* Summary Length - Only show for extractive summarization */}
+            {/* Summary Length Slider (Extractive Only) */}
             {summaryType === "extractive" && (
               <div className="space-y-3">
                 <div className="flex justify-between">
@@ -157,14 +204,18 @@ export default function SummarizePage() {
                   className="w-full"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Adjust the slider to control the length of your summary relative to the original text.
+                  Adjust the slider to control how much of the original text is retained in the extractive summary.
                 </p>
               </div>
             )}
 
             <Button
               onClick={handleGenerate}
-              disabled={isGenerating || (inputMethod === "text" && !textInput) || (inputMethod === "pdf" && !file)}
+              disabled={
+                isGenerating ||
+                (inputMethod === "text" && !textInput) ||
+                (inputMethod === "pdf" && !file)
+              }
               className="w-full bg-gradient-to-r from-violet-600 via-blue-500 to-teal-400 text-white"
             >
               {isGenerating ? "Generating..." : "Generate Summary"}
@@ -188,11 +239,11 @@ export default function SummarizePage() {
                 <p>{summary}</p>
               </div>
               <div className="flex justify-end mt-4 space-x-2">
-                <Button variant="outline" size="sm">
-                  Copy
+                <Button variant="outline" size="sm" onClick={handleCopy}>
+                  <ClipboardCopy className="w-4 h-4 mr-1" /> Copy
                 </Button>
-                <Button variant="outline" size="sm">
-                  Download
+                <Button variant="outline" size="sm" onClick={handleDownload}>
+                  <DownloadIcon className="w-4 h-4 mr-1" /> Download
                 </Button>
               </div>
             </CardContent>

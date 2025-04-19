@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
-import { Play, Download, Trash2, Volume2 } from "lucide-react"
+import { useState, useRef, useEffect } from "react"
+import { Play, Download, Trash2, Volume2, Pause } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Card } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
+import { toast } from "sonner"
 
 interface TextEntry {
     id: string
@@ -15,59 +16,92 @@ interface TextEntry {
     date: string
     time: string
     duration: string
+    audioData?: string  // Store audio as base64 data URL
 }
 
 export default function TextProcessor() {
     const [textInput, setTextInput] = useState("")
     const [isGenerating, setIsGenerating] = useState(false)
-    const [audioGenerated, setAudioGenerated] = useState(false)
     const [saveAudio, setSaveAudio] = useState(true)
     const [currentTime, setCurrentTime] = useState(0)
     const [isPlaying, setIsPlaying] = useState(false)
-    const [pastEntries, setPastEntries] = useState<TextEntry[]>([
-        {
-            id: "1",
-            text: "Annual report summary with key financial highlights and future projections...",
-            title: "Annual Report Notes",
-            date: "2023-04-01",
-            time: "12:34",
-            duration: "1:45",
-        },
-        {
-            id: "2",
-            text: "Project proposal for the new marketing campaign targeting Gen Z audience...",
-            title: "Marketing Campaign",
-            date: "2023-03-28",
-            time: "05:21",
-            duration: "2:12",
-        },
-        {
-            id: "3",
-            text: "Meeting notes from the product team discussion about upcoming features...",
-            title: "Product Meeting Notes",
-            date: "2023-03-25",
-            time: "03:45",
-            duration: "3:20",
-        },
-        {
-            id: "4",
-            text: "Research findings on consumer behavior in the post-pandemic market...",
-            title: "Market Research",
-            date: "2023-03-20",
-            time: "18:12",
-            duration: "4:05",
-        },
-    ])
+    const [pastEntries, setPastEntries] = useState<TextEntry[]>([])
+    const [currentAudioData, setCurrentAudioData] = useState<string | null>(null)
+    const audioRef = useRef<HTMLAudioElement | null>(null)
+    
+    const API_URL = "http://localhost:5000"
 
-    const handleGenerateAudio = () => {
-        if (!textInput.trim()) return
+    useEffect(() => {
+        const savedEntries = localStorage.getItem("textEntries")
+        if (savedEntries) setPastEntries(JSON.parse(savedEntries))
+        return () => cleanupAudio()
+    }, [])
+
+    useEffect(() => {
+        localStorage.setItem("textEntries", JSON.stringify(pastEntries))
+    }, [pastEntries])
+
+    const cleanupAudio = () => {
+        if (audioRef.current) {
+            audioRef.current.pause()
+            audioRef.current = null
+        }
+        if (currentAudioData) URL.revokeObjectURL(convertDataToBlobUrl(currentAudioData))
+    }
+
+    const convertBlobToDataURL = async (blob: Blob): Promise<string> => {
+        return new Promise((resolve) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result as string)
+            reader.readAsDataURL(blob)
+        })
+    }
+
+    const convertDataToBlobUrl = (dataUrl: string): string => {
+        const byteString = atob(dataUrl.split(',')[1])
+        const mimeType = dataUrl.split(',')[0].split(':')[1].split(';')[0]
+        const ab = new ArrayBuffer(byteString.length)
+        const ia = new Uint8Array(ab)
+        for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i)
+        }
+        const blob = new Blob([ab], { type: mimeType })
+        return URL.createObjectURL(blob)
+    }
+
+    const handleGenerateAudio = async () => {
+        if (!textInput.trim()) {
+            toast.warning("Please enter some text")
+            return
+        }
 
         setIsGenerating(true)
+        cleanupAudio()
 
-        // Simulate audio generation
-        setTimeout(() => {
-            setIsGenerating(false)
-            setAudioGenerated(true)
+        try {
+            const response = await fetch(`${API_URL}/api/tts`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: textInput }),
+            })
+
+            if (!response.ok) throw new Error(await response.text())
+
+            const audioBlob = await response.blob()
+            const audioData = await convertBlobToDataURL(audioBlob)
+            const blobUrl = convertDataToBlobUrl(audioData)
+            const audio = new Audio(blobUrl)
+
+            audioRef.current = audio
+            setCurrentAudioData(audioData)
+
+            audio.addEventListener("timeupdate", () => 
+                setCurrentTime(audio.currentTime)
+            )
+            audio.addEventListener("ended", () => {
+                setIsPlaying(false)
+                setCurrentTime(0)
+            })
 
             if (saveAudio) {
                 const newEntry: TextEntry = {
@@ -75,28 +109,88 @@ export default function TextProcessor() {
                     text: textInput,
                     title: `Text Entry ${pastEntries.length + 1}`,
                     date: new Date().toISOString().split("T")[0],
-                    time: new Date().toTimeString().split(" ")[0].substring(0, 5),
-                    duration: "2:00",
+                    time: new Date().toTimeString().substring(0, 5),
+                    duration: formatDuration(audio.duration),
+                    audioData
                 }
-
-                setPastEntries([newEntry, ...pastEntries])
+                setPastEntries(prev => [newEntry, ...prev])
             }
-        }, 1500)
+
+            toast.success("Audio generated successfully")
+        } catch (error) {
+            console.error("Error generating audio:", error)
+            toast.error("Failed to generate audio")
+        } finally {
+            setIsGenerating(false)
+        }
     }
 
     const handlePlayPause = () => {
+        if (!audioRef.current) return
+        isPlaying ? audioRef.current.pause() : audioRef.current.play()
         setIsPlaying(!isPlaying)
     }
 
     const handleDelete = (id: string) => {
-        setPastEntries(pastEntries.filter((entry) => entry.id !== id))
+        setPastEntries(prev => {
+            const updated = prev.filter(entry => entry.id !== id)
+            localStorage.setItem("textEntries", JSON.stringify(updated))
+            return updated
+        })
+        toast.success("Entry deleted")
     }
 
     const handleClearCurrent = () => {
-        setAudioGenerated(false)
+        cleanupAudio()
+        setCurrentAudioData(null)
         setTextInput("")
         setCurrentTime(0)
         setIsPlaying(false)
+    }
+
+    const handleDownload = (audioData?: string, title?: string) => {
+        if (!audioData) return
+
+        try {
+            const blobUrl = convertDataToBlobUrl(audioData)
+            const a = document.createElement("a")
+            a.href = blobUrl
+            a.download = `${title || 'audio'}.wav`
+            document.body.appendChild(a)
+            a.click()
+            
+            setTimeout(() => {
+                URL.revokeObjectURL(blobUrl)
+                document.body.removeChild(a)
+            }, 100)
+        } catch (error) {
+            console.error("Download failed:", error)
+            toast.error("Failed to download audio")
+        }
+    }
+
+    const handlePlayEntry = (entry: TextEntry) => {
+        if (!entry.audioData) return
+        cleanupAudio()
+
+        const blobUrl = convertDataToBlobUrl(entry.audioData)
+        const audio = new Audio(blobUrl)
+        audioRef.current = audio
+        setCurrentAudioData(entry.audioData)
+
+        audio.addEventListener("timeupdate", () => 
+            setCurrentTime(audio.currentTime)
+        )
+        audio.addEventListener("ended", () => setIsPlaying(false))
+        
+        audio.play()
+        setIsPlaying(true)
+    }
+
+    const formatDuration = (seconds: number) => {
+        const mins = Math.floor(seconds / 60)
+        const secs = Math.floor(seconds % 60)
+        return `${mins}:${secs.toString().padStart(2, '0')}`
     }
 
     return (
@@ -152,7 +246,7 @@ export default function TextProcessor() {
                         </div>
                     </Card>
 
-                    {audioGenerated && (
+                    {currentAudioData && (
                         <Card className="p-6 shadow-md rounded-xl mb-6">
                             <h3 className="text-xl font-semibold mb-4">Audio Generated</h3>
 
@@ -163,23 +257,27 @@ export default function TextProcessor() {
                                     size="icon"
                                     className="h-12 w-12 rounded-full bg-purple-100 hover:bg-purple-200 text-purple-600"
                                 >
-                                    <Play className={`h-6 w-6 ${isPlaying ? "hidden" : "block"}`} />
-                                    <div className={`h-4 w-4 rounded-sm bg-purple-600 ${isPlaying ? "block" : "hidden"}`}></div>
+                                    {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
                                 </Button>
 
                                 <div className="flex-1">
                                     <Slider
                                         value={[currentTime]}
-                                        max={120}
+                                        max={audioRef.current?.duration || 0}
                                         step={1}
-                                        onValueChange={(value) => setCurrentTime(value[0])}
+                                        onValueChange={([value]) => {
+                                            if (audioRef.current) {
+                                                audioRef.current.currentTime = value
+                                                setCurrentTime(value)
+                                            }
+                                        }}
                                         className="cursor-pointer"
                                     />
                                     <div className="flex justify-between text-xs text-gray-500 mt-1">
                                         <span>
                                             {Math.floor(currentTime / 60)}:{(currentTime % 60).toString().padStart(2, "0")}
                                         </span>
-                                        <span>2:00</span>
+                                        <span>{formatDuration(audioRef.current?.duration || 0)}</span>
                                     </div>
                                 </div>
                             </div>
@@ -188,7 +286,7 @@ export default function TextProcessor() {
                                 <Button
                                     variant="outline"
                                     className="flex-1 border-purple-200 hover:bg-purple-50 text-purple-700"
-                                    onClick={() => { }}
+                                    onClick={() => handleDownload(currentAudioData)}
                                 >
                                     <Download className="mr-2 h-4 w-4" />
                                     Download
@@ -220,7 +318,7 @@ export default function TextProcessor() {
                                         <div className="flex-1">
                                             <h4 className="font-medium text-gray-900">{entry.title}</h4>
                                             <p className="text-xs text-gray-500">
-                                                {entry.date} • {entry.time}
+                                                {entry.date} • {entry.time} • {entry.duration}
                                             </p>
                                         </div>
                                     </div>
@@ -229,11 +327,21 @@ export default function TextProcessor() {
 
                                     <div className="flex items-center justify-between">
                                         <div className="flex space-x-2">
-                                            <Button size="sm" variant="ghost" className="h-8 px-2 text-xs">
+                                            <Button 
+                                                size="sm" 
+                                                variant="ghost" 
+                                                className="h-8 px-2 text-xs"
+                                                onClick={() => handlePlayEntry(entry)}
+                                            >
                                                 <Play className="h-3 w-3 mr-1" />
                                                 Play
                                             </Button>
-                                            <Button size="sm" variant="ghost" className="h-8 px-2 text-xs">
+                                            <Button 
+                                                size="sm" 
+                                                variant="ghost" 
+                                                className="h-8 px-2 text-xs"
+                                                onClick={() => handleDownload(entry.audioData, entry.title)}
+                                            >
                                                 <Download className="h-3 w-3 mr-1" />
                                                 Download
                                             </Button>
@@ -257,26 +365,9 @@ export default function TextProcessor() {
                                 </div>
                             )}
                         </div>
-
-                        {pastEntries.length > 0 && (
-                            <div className="flex justify-center mt-4">
-                                <div className="flex space-x-1">
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400">
-                                        &lt;
-                                    </Button>
-                                    <div className="h-1 w-24 bg-gray-200 rounded-full self-center">
-                                        <div className="h-1 w-6 bg-purple-500 rounded-full"></div>
-                                    </div>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400">
-                                        &gt;
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
                     </Card>
                 </div>
             </div>
         </div>
     )
 }
-

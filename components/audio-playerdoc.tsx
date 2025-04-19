@@ -5,44 +5,58 @@ import { Play, Pause, Volume2 } from "lucide-react"
 import { Slider } from "@/components/ui/slider"
 
 interface AudioPlayerProps {
-  audioUrl: string | null
+  audioData: string | null
 }
 
-export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
+export default function AudioPlayer({ audioData }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    if (audioUrl) {
-      // Clean up previous audio instance
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current.removeEventListener("timeupdate", updateTime)
-        audioRef.current.removeEventListener("loadedmetadata", updateMetadata)
-      }
+    // Cleanup previous audio and URL
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.removeEventListener("timeupdate", updateTime)
+      audioRef.current.removeEventListener("loadedmetadata", updateMetadata)
+    }
+    if (blobUrl) URL.revokeObjectURL(blobUrl)
 
-      // Create new audio element
-      audioRef.current = new Audio(audioUrl)
-      
+    if (audioData) {
+      // Convert base64 to blob URL
+      const byteString = atob(audioData.split(',')[1])
+      const mimeType = audioData.split(',')[0].split(':')[1].split(';')[0]
+      const ab = new ArrayBuffer(byteString.length)
+      const ia = new Uint8Array(ab)
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i)
+      }
+      const blob = new Blob([ab], { type: mimeType })
+      const url = URL.createObjectURL(blob)
+      setBlobUrl(url)
+
+      // Create new audio instance
+      const audio = new Audio(url)
+      audioRef.current = audio
+
       // Set up event listeners
-      audioRef.current.addEventListener("loadedmetadata", updateMetadata)
-      audioRef.current.addEventListener("timeupdate", updateTime)
-      audioRef.current.addEventListener("ended", () => setIsPlaying(false))
+      audio.addEventListener('loadedmetadata', updateMetadata)
+      audio.addEventListener('timeupdate', updateTime)
+      audio.addEventListener('ended', () => setIsPlaying(false))
 
       // Initialize duration
       updateMetadata()
-    }
 
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current.removeEventListener("timeupdate", updateTime)
-        audioRef.current.removeEventListener("loadedmetadata", updateMetadata)
+      return () => {
+        audio.pause()
+        URL.revokeObjectURL(url)
+        audio.removeEventListener("timeupdate", updateTime)
+        audio.removeEventListener("loadedmetadata", updateMetadata)
       }
     }
-  }, [audioUrl])
+  }, [audioData])
 
   const updateMetadata = () => {
     if (audioRef.current) {
@@ -67,7 +81,7 @@ export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
       }
       setIsPlaying(!isPlaying)
     } catch (error) {
-      console.error("Audio playback failed:", error)
+      console.error("Audio playback error:", error)
     }
   }
 
@@ -91,21 +105,20 @@ export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
         <button
           onClick={togglePlayPause}
           className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-purple-600 flex items-center justify-center text-white shadow-md hover:shadow-lg transition-all duration-200"
-          disabled={!audioUrl}
+          disabled={!audioData}
         >
           {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
         </button>
 
         <div className="flex-1">
-          <Slider 
-            value={[currentTime]} 
-            max={duration} 
-            step={1} 
-            onValueChange={handleSliderChange} 
+          <Slider
+            value={[currentTime]}
+            max={duration}
+            step={1}
+            onValueChange={handleSliderChange}
             className="my-1.5"
-            disabled={!audioUrl}
+            disabled={!audioData}
           />
-
           <div className="flex justify-between text-xs text-gray-500">
             <span>{formatTime(currentTime)}</span>
             <span>{formatTime(duration)}</span>
